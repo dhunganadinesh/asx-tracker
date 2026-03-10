@@ -1,30 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 
-const ALL_ASX_STOCKS = [
-  { ticker: "BHP.AX", name: "BHP Group", sector: "Materials" },
-  { ticker: "CBA.AX", name: "Commonwealth Bank", sector: "Financials" },
-  { ticker: "RIO.AX", name: "Rio Tinto", sector: "Materials" },
-  { ticker: "WDS.AX", name: "Woodside Energy", sector: "Energy" },
-  { ticker: "FMG.AX", name: "Fortescue", sector: "Materials" },
-  { ticker: "WBC.AX", name: "Westpac", sector: "Financials" },
-  { ticker: "ANZ.AX", name: "ANZ Group", sector: "Financials" },
-  { ticker: "NCM.AX", name: "Newcrest Mining", sector: "Materials" },
-  { ticker: "NAB.AX", name: "NAB", sector: "Financials" },
-  { ticker: "MQG.AX", name: "Macquarie Group", sector: "Financials" },
-  { ticker: "WES.AX", name: "Wesfarmers", sector: "Consumer" },
-  { ticker: "CSL.AX", name: "CSL Limited", sector: "Healthcare" },
-  { ticker: "TLS.AX", name: "Telstra", sector: "Telecom" },
-  { ticker: "WOW.AX", name: "Woolworths", sector: "Consumer" },
-  { ticker: "COL.AX", name: "Coles Group", sector: "Consumer" },
-  { ticker: "NXT.AX", name: "NextDC", sector: "Technology" },
-  { ticker: "XRO.AX", name: "Xero", sector: "Technology" },
-  { ticker: "S32.AX", name: "South32", sector: "Materials" },
-  { ticker: "NST.AX", name: "Northern Star", sector: "Materials" },
-  { ticker: "STO.AX", name: "Santos", sector: "Energy" },
-  { ticker: "QAN.AX", name: "Qantas", sector: "Industrials" },
-];
+const WORKER_BASE = "https://yahootracker.dhunganadinesh1.workers.dev";
 
-const DEFAULT_TICKERS = ["BHP.AX","CBA.AX","RIO.AX","WDS.AX","FMG.AX","NXT.AX","ANZ.AX","NCM.AX"];
+const DEFAULT_TICKERS = [
+  "BHP.AX",
+  "CBA.AX",
+  "RIO.AX",
+  "WDS.AX",
+  "FMG.AX",
+  "NXT.AX",
+  "ANZ.AX",
+  "NCM.AX",
+];
 
 const NEWS = [
   { id: 1, time: "09:42", title: "BHP flags record iron ore shipments from Pilbara ports", tag: "BHP", sentiment: "up" },
@@ -45,75 +32,47 @@ const SHIPS = [
   { id: 5, name: "MV Copper Dawn", type: "General Cargo", cargo: "Copper", from: "Fremantle, WA", to: "Osaka, JP", status: "Underway", relevance: "RIO" },
 ];
 
-// Try multiple proxies in order
-const PROXIES = [
-  function(url) { return "https://api.allorigins.win/raw?url=" + encodeURIComponent(url); },
-  function(url) { return "https://corsproxy.io/?" + encodeURIComponent(url); },
-  function(url) { return "https://cors-anywhere.herokuapp.com/" + url; },
-];
-
-async function fetchYahooPrice(ticker) {
-  const yahooUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + ticker + "?interval=1d&range=1mo";
-
-  for (var i = 0; i < PROXIES.length; i++) {
-    try {
-      const proxyUrl = PROXIES[i](yahooUrl);
-      const res = await fetch(proxyUrl, { headers: { "Accept": "application/json" } });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const result = data.chart && data.chart.result && data.chart.result[0];
-      if (!result) continue;
-      const meta = result.meta;
-      const price = meta.regularMarketPrice || meta.previousClose;
-      const prevClose = meta.previousClose || meta.chartPreviousClose;
-      const change = prevClose ? parseFloat(((price - prevClose) / prevClose * 100).toFixed(2)) : 0;
-      const closes = result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close;
-      const chartData = closes
-        ? closes.filter(function(c) { return c !== null && c !== undefined; }).map(function(c, idx) { return { day: idx, price: parseFloat(c.toFixed(2)) }; })
-        : [{ day: 0, price: parseFloat(price.toFixed(2)) }];
-      return { price: parseFloat(price.toFixed(2)), change: change, chartData: chartData, volume: meta.regularMarketVolume || 0, source: "yahoo" };
-    } catch(e) {
-      continue;
-    }
-  }
-  return null;
-}
-
-// Alpha Vantage free fallback (no key needed for basic quotes via unofficial endpoint)
-async function fetchAlphaPrice(ticker) {
+async function fetchPrice(ticker) {
   try {
-    // Use the free unofficial marketstack-style endpoint
-    const symbol = ticker.replace(".AX", "") + ".AUS";
-    const url = "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://query2.finance.yahoo.com/v7/finance/quote?symbols=" + ticker);
-    const res = await fetch(url);
+    const res = await fetch(
+      WORKER_BASE + "/quote?ticker=" + encodeURIComponent(ticker)
+    );
     if (!res.ok) return null;
+
     const data = await res.json();
-    const quote = data.quoteResponse && data.quoteResponse.result && data.quoteResponse.result[0];
-    if (!quote) return null;
-    const price = quote.regularMarketPrice;
-    const change = quote.regularMarketChangePercent ? parseFloat(quote.regularMarketChangePercent.toFixed(2)) : 0;
-    return { price: parseFloat(price.toFixed(2)), change: change, chartData: generateFallbackChart(price), volume: quote.regularMarketVolume || 0, source: "yahoo-v7" };
-  } catch(e) {
+    if (!data.ok) return null;
+
+    return {
+      price: data.price,
+      change: data.change,
+      chartData: data.chartData || [],
+      volume: data.volume || 0,
+      source: "worker",
+    };
+  } catch (e) {
     return null;
   }
 }
 
-function generateFallbackChart(basePrice) {
-  const data = [];
-  let price = basePrice || 10;
-  for (var i = 0; i <= 20; i++) {
-    price = price + (Math.random() - 0.48) * (price * 0.01);
-    data.push({ day: i, price: parseFloat(price.toFixed(2)) });
-  }
-  return data;
-}
+async function searchStocksRemote(query) {
+  try {
+    const res = await fetch(
+      WORKER_BASE + "/search?q=" + encodeURIComponent(query)
+    );
+    if (!res.ok) return [];
 
-async function fetchPrice(ticker) {
-  var result = await fetchYahooPrice(ticker);
-  if (result) return result;
-  result = await fetchAlphaPrice(ticker);
-  if (result) return result;
-  return null;
+    const data = await res.json();
+
+    return (data.results || []).map(function(item) {
+      return {
+        ticker: item.yahooTicker,
+        name: item.name,
+        sector: item.sector || "Unknown",
+      };
+    });
+  } catch (e) {
+    return [];
+  }
 }
 
 function Sparkline({ data, color }) {
@@ -133,7 +92,7 @@ function Sparkline({ data, color }) {
   );
 }
 
-function MiniChart({ data, color }) {
+function MiniChart({ data, color, id }) {
   if (!data || data.length < 2) return null;
   const prices = data.map(function(d) { return d.price; });
   const min = Math.min.apply(null, prices) * 0.998;
@@ -143,15 +102,16 @@ function MiniChart({ data, color }) {
   const pts = data.map(function(d, i) {
     return ((i / (data.length - 1)) * w) + "," + (h - ((d.price - min) / range) * h);
   }).join(" ");
+  const gradientId = "cg-" + id.replace(/[^a-zA-Z0-9_-]/g, "");
   return (
     <svg width="100%" viewBox={"0 0 " + w + " " + h} style={{ display: "block" }}>
       <defs>
-        <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.3" />
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <polygon points={"0," + h + " " + pts + " " + w + "," + h} fill="url(#cg)" />
+      <polygon points={"0," + h + " " + pts + " " + w + "," + h} fill={"url(#" + gradientId + ")"} />
       <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
     </svg>
   );
@@ -170,8 +130,14 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [fetchingTicker, setFetchingTicker] = useState(null);
+  const [searching, setSearching] = useState(false);
+
   const watchlistRef = useRef(DEFAULT_TICKERS.map(function(t) {
-    return ALL_ASX_STOCKS.find(function(s) { return s.ticker === t; });
+    return {
+      ticker: t,
+      name: t.replace(".AX", ""),
+      sector: "Unknown",
+    };
   }));
 
   async function loadStocks(defs) {
@@ -179,19 +145,27 @@ export default function App() {
     const results = [];
     for (var i = 0; i < defs.length; i++) {
       var def = defs[i];
-      setLoadingStatus("Fetching " + def.ticker + " (" + (i+1) + "/" + defs.length + ")...");
+      setLoadingStatus("Fetching " + def.ticker + " (" + (i + 1) + "/" + defs.length + ")...");
       var data = await fetchPrice(def.ticker);
       if (data) {
         results.push(Object.assign({}, def, data));
       } else {
         results.push(Object.assign({}, def, {
-          price: null, change: 0, volume: 0,
-          chartData: generateFallbackChart(10), error: true
+          price: null,
+          change: 0,
+          volume: 0,
+          chartData: [],
+          error: true,
         }));
       }
     }
     setStocks(results);
-    if (results[0]) setSelectedStock(results[0]);
+    setSelectedStock(function(prev) {
+      if (!results.length) return null;
+      if (!prev) return results[0];
+      var updated = results.find(function(s) { return s.ticker === prev.ticker; });
+      return updated || results[0];
+    });
     setLastUpdated(new Date());
     setLoadingStatus("");
     setLoading(false);
@@ -208,25 +182,42 @@ export default function App() {
     return function() { clearInterval(interval); };
   }, []);
 
-  function handleSearch(query) {
+  async function handleSearch(query) {
     setSearchQuery(query);
-    if (!query.trim()) { setSearchResults([]); return; }
-    const q = query.toLowerCase();
-    const results = ALL_ASX_STOCKS.filter(function(s) {
-      return (s.ticker.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)) &&
-        !stocks.find(function(w) { return w.ticker === s.ticker; });
+
+    if (!query.trim()) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    const results = await searchStocksRemote(query);
+
+    const filtered = results.filter(function(s) {
+      return !stocks.find(function(w) { return w.ticker === s.ticker; });
     }).slice(0, 6);
-    setSearchResults(results);
+
+    setSearchResults(filtered);
+    setSearching(false);
   }
 
   async function addStock(def) {
     setSearchQuery("");
     setSearchResults([]);
     setFetchingTicker(def.ticker);
+
     var data = await fetchPrice(def.ticker);
     var newStock = data
       ? Object.assign({}, def, data)
-      : Object.assign({}, def, { price: null, change: 0, volume: 0, chartData: generateFallbackChart(10), error: true });
+      : Object.assign({}, def, {
+          price: null,
+          change: 0,
+          volume: 0,
+          chartData: [],
+          error: true,
+        });
+
     watchlistRef.current = watchlistRef.current.concat([def]);
     setStocks(function(prev) { return prev.concat([newStock]); });
     setSelectedStock(newStock);
@@ -236,13 +227,24 @@ export default function App() {
   function removeStock(ticker) {
     watchlistRef.current = watchlistRef.current.filter(function(s) { return s.ticker !== ticker; });
     setStocks(function(prev) { return prev.filter(function(s) { return s.ticker !== ticker; }); });
-    setSelectedStock(function(prev) { return prev && prev.ticker === ticker ? null : prev; });
+    setSelectedStock(function(prev) {
+      if (!prev || prev.ticker !== ticker) return prev;
+      var next = stocks.filter(function(s) { return s.ticker !== ticker; });
+      return next[0] || null;
+    });
   }
 
   function addAlert() {
     if (!newAlert.price) return;
     setAlerts(function(prev) {
-      return prev.concat([Object.assign({}, newAlert, { id: Date.now(), price: parseFloat(newAlert.price), active: true })]);
+      return prev.concat([Object.assign({}, newAlert, {
+        id: Date.now(),
+        price: parseFloat(newAlert.price),
+        active: true,
+      })]);
+    });
+    setNewAlert(function(prev) {
+      return Object.assign({}, prev, { price: "" });
     });
   }
 
@@ -256,19 +258,28 @@ export default function App() {
 
   useEffect(function() {
     if (!stocks.length || !alerts.length) return;
+
     alerts.forEach(function(alert) {
       var stock = stocks.find(function(s) { return s.ticker === alert.ticker; });
       if (!stock || !stock.price) return;
+
       if (alert.condition === "above" && stock.price >= alert.price) {
         setTriggeredAlerts(function(prev) {
           if (prev.find(function(t) { return t.id === alert.id; })) return prev;
-          return prev.concat([Object.assign({}, alert, { triggeredAt: new Date().toLocaleTimeString(), currentPrice: stock.price })]);
+          return prev.concat([Object.assign({}, alert, {
+            triggeredAt: new Date().toLocaleTimeString(),
+            currentPrice: stock.price,
+          })]);
         });
       }
+
       if (alert.condition === "below" && stock.price <= alert.price) {
         setTriggeredAlerts(function(prev) {
           if (prev.find(function(t) { return t.id === alert.id; })) return prev;
-          return prev.concat([Object.assign({}, alert, { triggeredAt: new Date().toLocaleTimeString(), currentPrice: stock.price })]);
+          return prev.concat([Object.assign({}, alert, {
+            triggeredAt: new Date().toLocaleTimeString(),
+            currentPrice: stock.price,
+          })]);
         });
       }
     });
@@ -281,32 +292,82 @@ export default function App() {
     }
   }, [stocks]);
 
+  useEffect(function() {
+    if (stocks.length && !stocks.find(function(s) { return s.ticker === newAlert.ticker; })) {
+      setNewAlert(function(prev) {
+        return Object.assign({}, prev, { ticker: stocks[0].ticker });
+      });
+    }
+  }, [stocks]);
+
   const S = {
     app: { minHeight: "100vh", background: "#050d1a", color: "#e2e8f0", fontFamily: "'IBM Plex Mono','Courier New',monospace", fontSize: "13px" },
     header: { background: "#070f1f", borderBottom: "1px solid #0f2d4a", padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" },
     logo: { color: "#00d4ff", fontSize: "16px", fontWeight: "700", letterSpacing: "3px" },
     pulse: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#00ff88", marginRight: 8, animation: "pulse 2s infinite" },
     nav: { display: "flex", gap: 4, background: "#070f1f", padding: "8px 24px", borderBottom: "1px solid #0f2d4a" },
-    navBtn: function(a) { return { background: a ? "#00d4ff15" : "transparent", color: a ? "#00d4ff" : "#4a6fa5", border: a ? "1px solid #00d4ff30" : "1px solid transparent", padding: "6px 16px", borderRadius: 4, cursor: "pointer", fontSize: "11px", letterSpacing: "1px", textTransform: "uppercase", fontFamily: "inherit" }; },
+    navBtn: function(a) {
+      return {
+        background: a ? "#00d4ff15" : "transparent",
+        color: a ? "#00d4ff" : "#4a6fa5",
+        border: a ? "1px solid #00d4ff30" : "1px solid transparent",
+        padding: "6px 16px",
+        borderRadius: 4,
+        cursor: "pointer",
+        fontSize: "11px",
+        letterSpacing: "1px",
+        textTransform: "uppercase",
+        fontFamily: "inherit",
+      };
+    },
     main: { padding: 24, maxWidth: 1400, margin: "0 auto" },
     grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
     card: { background: "#070f1f", border: "1px solid #0f2d4a", borderRadius: 8, padding: 16 },
     cardTitle: { color: "#4a6fa5", fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 12 },
-    row: function(sel) { return { display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 6, cursor: "pointer", background: sel ? "#00d4ff10" : "transparent", border: sel ? "1px solid #00d4ff20" : "1px solid transparent", marginBottom: 4 }; },
+    row: function(sel) {
+      return {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 12px",
+        borderRadius: 6,
+        cursor: "pointer",
+        background: sel ? "#00d4ff10" : "transparent",
+        border: sel ? "1px solid #00d4ff20" : "1px solid transparent",
+        marginBottom: 4,
+      };
+    },
     up: { color: "#00ff88" },
     down: { color: "#ff4d6d" },
-    badge: function(s) { return { fontSize: "9px", padding: "2px 6px", borderRadius: 3, background: s === "up" ? "#00ff8815" : s === "down" ? "#ff4d6d15" : "#94a3b815", color: s === "up" ? "#00ff88" : s === "down" ? "#ff4d6d" : "#94a3b8", border: "1px solid " + (s === "up" ? "#00ff8830" : s === "down" ? "#ff4d6d30" : "#94a3b830") }; },
+    badge: function(s) {
+      return {
+        fontSize: "9px",
+        padding: "2px 6px",
+        borderRadius: 3,
+        background: s === "up" ? "#00ff8815" : s === "down" ? "#ff4d6d15" : "#94a3b815",
+        color: s === "up" ? "#00ff88" : s === "down" ? "#ff4d6d" : "#94a3b8",
+        border: "1px solid " + (s === "up" ? "#00ff8830" : s === "down" ? "#ff4d6d30" : "#94a3b830"),
+      };
+    },
     input: { background: "#050d1a", border: "1px solid #0f2d4a", color: "#e2e8f0", padding: "6px 10px", borderRadius: 4, fontFamily: "inherit", fontSize: "12px" },
     select: { background: "#050d1a", border: "1px solid #0f2d4a", color: "#e2e8f0", padding: "6px 10px", borderRadius: 4, fontFamily: "inherit", fontSize: "12px" },
     btn: { background: "#00d4ff20", color: "#00d4ff", border: "1px solid #00d4ff40", padding: "6px 14px", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: "11px" },
     btnSm: { background: "#ff4d6d15", color: "#ff4d6d", border: "1px solid #ff4d6d30", padding: "4px 10px", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: "10px" },
     alertRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#0a1628", borderRadius: 6, marginBottom: 6, border: "1px solid #0f2d4a" },
     shipRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #0f2d4a" },
-    dot: function(s) { return { display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: s === "Underway" ? "#00ff88" : "#f59e0b", marginRight: 6 }; },
+    dot: function(s) {
+      return {
+        display: "inline-block",
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        background: s === "Underway" ? "#00ff88" : "#f59e0b",
+        marginRight: 6,
+      };
+    },
   };
 
   const priceColor = function(s) { return s.change >= 0 ? "#00ff88" : "#ff4d6d"; };
-  const fmt = function(n) { return n !== null && n !== undefined ? "$" + n.toFixed(2) : "—"; };
 
   return (
     <div style={S.app}>
@@ -327,7 +388,6 @@ export default function App() {
         }
       `}</style>
 
-      {/* Header */}
       <div style={S.header}>
         <div style={S.logo}>⬡ ASX INTEL</div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -335,43 +395,56 @@ export default function App() {
             ? <span style={{ color: "#f59e0b", fontSize: "11px" }}>⟳ {loadingStatus || "Loading..."}</span>
             : <span style={{ color: "#4a6fa5", fontSize: "11px" }}><span style={S.pulse}></span>~15min delay · {lastUpdated ? lastUpdated.toLocaleTimeString() : ""}</span>
           }
-          <button style={Object.assign({}, S.btn, { fontSize: "10px", padding: "4px 10px" })} onClick={function() { loadStocks(watchlistRef.current); }}>↺ REFRESH</button>
+          <button
+            style={Object.assign({}, S.btn, { fontSize: "10px", padding: "4px 10px" })}
+            onClick={function() { loadStocks(watchlistRef.current); }}
+          >
+            ↺ REFRESH
+          </button>
         </div>
       </div>
 
-      {/* Ticker bar */}
       <div style={{ background: "#040b17", borderBottom: "1px solid #0f2d4a", padding: "6px 24px", display: "flex", gap: 24, overflowX: "auto" }}>
         {loading
           ? <span style={{ color: "#4a6fa5", fontSize: "11px" }}>{loadingStatus || "Fetching ASX prices..."}</span>
           : stocks.map(function(s) {
-            return (
-              <span key={s.ticker} style={{ whiteSpace: "nowrap", fontSize: "11px" }}>
-                <span style={{ color: "#4a6fa5" }}>{s.ticker.replace(".AX","")} </span>
-                {s.error || !s.price
-                  ? <span style={{ color: "#f59e0b" }}>N/A </span>
-                  : <><span style={{ color: "#e2e8f0" }}>${s.price.toFixed(2)} </span><span style={s.change >= 0 ? S.up : S.down}>{s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%</span></>
-                }
-              </span>
-            );
-          })
+              return (
+                <span key={s.ticker} style={{ whiteSpace: "nowrap", fontSize: "11px" }}>
+                  <span style={{ color: "#4a6fa5" }}>{s.ticker.replace(".AX", "")} </span>
+                  {s.error || !s.price
+                    ? <span style={{ color: "#f59e0b" }}>N/A </span>
+                    : (
+                      <>
+                        <span style={{ color: "#e2e8f0" }}>${s.price.toFixed(2)} </span>
+                        <span style={s.change >= 0 ? S.up : S.down}>
+                          {s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%
+                        </span>
+                      </>
+                    )
+                  }
+                </span>
+              );
+            })
         }
       </div>
 
-      {/* Nav */}
       <div style={S.nav} className="nav-wrap">
         {[["watchlist","WATCHLIST"],["charts","CHARTS"],["news","NEWS"],["ships","SHIPS"],["alerts","ALERTS"]].map(function(item) {
-          return <button key={item[0]} style={S.navBtn(tab===item[0])} onClick={function(){setTab(item[0]);}}>{item[1]}</button>;
+          return (
+            <button key={item[0]} style={S.navBtn(tab === item[0])} onClick={function() { setTab(item[0]); }}>
+              {item[1]}
+            </button>
+          );
         })}
       </div>
 
-      {/* Alert banners */}
       {triggeredAlerts.length > 0 && (
         <div style={{ padding: "8px 24px" }}>
           {triggeredAlerts.map(function(a, i) {
             return (
               <div key={i} style={{ background: "#ff4d6d10", border: "1px solid #ff4d6d40", borderRadius: 6, padding: "10px 14px", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
-                <span>🔔 <strong style={{ color:"#ff4d6d" }}>ALERT</strong> — {a.ticker.replace(".AX","")} {a.condition} ${a.price.toFixed(2)} · Now ${a.currentPrice ? a.currentPrice.toFixed(2) : "?"} · {a.triggeredAt}</span>
-                <button style={S.btnSm} onClick={function(){dismissTriggered(i);}}>DISMISS</button>
+                <span>🔔 <strong style={{ color: "#ff4d6d" }}>ALERT</strong> — {a.ticker.replace(".AX","")} {a.condition} ${a.price.toFixed(2)} · Now ${a.currentPrice ? a.currentPrice.toFixed(2) : "?"} · {a.triggeredAt}</span>
+                <button style={S.btnSm} onClick={function() { dismissTriggered(i); }}>DISMISS</button>
               </div>
             );
           })}
@@ -379,34 +452,47 @@ export default function App() {
       )}
 
       <div style={S.main} className="main-pad">
-
-        {/* WATCHLIST */}
         {tab === "watchlist" && (
           <div className="grid2">
             <div style={S.card} className="card-inner">
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                 <span style={S.cardTitle}>ASX Watchlist</span>
-                <span style={{ color: "#4a6fa5", fontSize: "10px" }}>Yahoo Finance · ~15min delay</span>
+                <span style={{ color: "#4a6fa5", fontSize: "10px" }}>Worker + Yahoo Finance · ~15min delay</span>
               </div>
 
-              {/* Search */}
               <div style={{ position: "relative", marginBottom: 12 }}>
                 <input
-                  style={Object.assign({}, S.input, { width: "100%", paddingLeft: 28 })} className="search-input"
+                  style={Object.assign({}, S.input, { width: "100%", paddingLeft: 28 })}
+                  className="search-input"
                   placeholder="Search stock name or ticker to add..."
                   value={searchQuery}
-                  onChange={function(e){ handleSearch(e.target.value); }}
+                  onChange={function(e) { handleSearch(e.target.value); }}
                 />
                 <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#4a6fa5" }}>⌕</span>
-                {fetchingTicker && <div style={{ color: "#f59e0b", fontSize: 11, padding: "6px 0" }}>⟳ Fetching real price for {fetchingTicker}...</div>}
+
+                {searching && (
+                  <div style={{ color: "#f59e0b", fontSize: 11, padding: "6px 0" }}>
+                    ⟳ Searching ASX stocks...
+                  </div>
+                )}
+
+                {fetchingTicker && (
+                  <div style={{ color: "#f59e0b", fontSize: 11, padding: "6px 0" }}>
+                    ⟳ Fetching real price for {fetchingTicker}...
+                  </div>
+                )}
+
                 {searchResults.length > 0 && (
                   <div style={{ position: "absolute", top: "110%", left: 0, right: 0, background: "#070f1f", border: "1px solid #00d4ff30", borderRadius: 6, zIndex: 100 }}>
-                    {searchResults.map(function(s) {
+                    {searchResults.map(function(s, idx) {
                       return (
-                        <div key={s.ticker} onClick={function(){addStock(s);}}
-                          style={{ padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", borderBottom: "1px solid #0f2d4a" }}
-                          onMouseEnter={function(e){e.currentTarget.style.background="#00d4ff10";}}
-                          onMouseLeave={function(e){e.currentTarget.style.background="transparent";}}>
+                        <div
+                          key={s.ticker}
+                          onClick={function() { addStock(s); }}
+                          style={{ padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", borderBottom: idx < searchResults.length - 1 ? "1px solid #0f2d4a" : "none" }}
+                          onMouseEnter={function(e) { e.currentTarget.style.background = "#00d4ff10"; }}
+                          onMouseLeave={function(e) { e.currentTarget.style.background = "transparent"; }}
+                        >
                           <div>
                             <span style={{ color: "#00d4ff", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</span>
                             <span style={{ color: "#4a6fa5", marginLeft: 8, fontSize: 11 }}>{s.name}</span>
@@ -422,23 +508,37 @@ export default function App() {
               {loading
                 ? <div style={{ color: "#4a6fa5", padding: 20, textAlign: "center" }}>⟳ {loadingStatus}</div>
                 : stocks.map(function(s) {
-                  return (
-                    <div key={s.ticker} style={S.row(selectedStock && selectedStock.ticker === s.ticker)} onClick={function(){setSelectedStock(s);}}>
-                      <div style={{ minWidth: 80 }}>
-                        <div style={{ color: "#e2e8f0", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</div>
-                        <div style={{ color: "#4a6fa5", fontSize: 11 }}>{s.name}</div>
+                    return (
+                      <div key={s.ticker} style={S.row(selectedStock && selectedStock.ticker === s.ticker)} onClick={function() { setSelectedStock(s); }}>
+                        <div style={{ minWidth: 80 }}>
+                          <div style={{ color: "#e2e8f0", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</div>
+                          <div style={{ color: "#4a6fa5", fontSize: 11 }}>{s.name}</div>
+                        </div>
+                        <div style={{ textAlign: "right", minWidth: 75 }}>
+                          {s.error || !s.price
+                            ? <div style={{ color: "#f59e0b", fontSize: 11 }}>N/A</div>
+                            : (
+                              <>
+                                <div style={{ color: "#e2e8f0" }}>${s.price.toFixed(2)}</div>
+                                <div style={s.change >= 0 ? S.up : S.down}>
+                                  {s.change >= 0 ? "▲" : "▼"} {Math.abs(s.change)}%
+                                </div>
+                              </>
+                            )
+                          }
+                        </div>
+                        <span className="hide-sm">
+                          <Sparkline data={s.chartData || []} color={priceColor(s)} />
+                        </span>
+                        <button
+                          onClick={function(e) { e.stopPropagation(); removeStock(s.ticker); }}
+                          style={{ background: "transparent", border: "none", color: "#4a6fa5", cursor: "pointer", fontSize: 14, padding: "0 4px", flexShrink: 0 }}
+                        >
+                          ✕
+                        </button>
                       </div>
-                      <div style={{ textAlign: "right", minWidth: 75 }}>
-                        {s.error || !s.price
-                          ? <div style={{ color: "#f59e0b", fontSize: 11 }}>N/A</div>
-                          : <><div style={{ color: "#e2e8f0" }}>${s.price.toFixed(2)}</div><div style={s.change >= 0 ? S.up : S.down}>{s.change >= 0 ? "▲" : "▼"} {Math.abs(s.change)}%</div></>
-                        }
-                      </div>
-                      <span className="hide-sm"><Sparkline data={s.chartData||[]} color={priceColor(s)} /></span>
-                      <button onClick={function(e){e.stopPropagation();removeStock(s.ticker);}} style={{ background:"transparent", border:"none", color:"#4a6fa5", cursor:"pointer", fontSize:14, padding:"0 4px", flexShrink:0 }}>✕</button>
-                    </div>
-                  );
-                })
+                    );
+                  })
               }
             </div>
 
@@ -451,11 +551,10 @@ export default function App() {
                       <div style={{ color: "#f59e0b", marginBottom: 12 }}>Could not load price data.</div>
                       <div style={{ color: "#4a6fa5", fontSize: 11, lineHeight: 1.8 }}>
                         This can happen because:<br/>
-                        · The CORS proxy is temporarily down<br/>
-                        · StackBlitz is blocking the request<br/>
-                        · Market is closed (ASX hours: 10am–4pm AEST)<br/><br/>
-                        Try clicking ↺ REFRESH in the header.<br/>
-                        Once deployed to Cloudflare, this will work reliably.
+                        · The Worker could not fetch Yahoo data<br/>
+                        · The ticker is temporarily unavailable<br/>
+                        · Market data is delayed or missing<br/><br/>
+                        Try clicking ↺ REFRESH in the header.
                       </div>
                     </div>
                   )
@@ -466,14 +565,14 @@ export default function App() {
                         <div style={Object.assign({}, selectedStock.change >= 0 ? S.up : S.down, { fontSize: 14 })}>
                           {selectedStock.change >= 0 ? "▲" : "▼"} {Math.abs(selectedStock.change)}% today
                         </div>
-                        <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 4 }}>~15 min delayed · Yahoo Finance</div>
+                        <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 4 }}>~15 min delayed · Worker / Yahoo</div>
                       </div>
                       <div style={{ marginBottom: 16 }}>
-                        <MiniChart data={selectedStock.chartData||[]} color={priceColor(selectedStock)} />
+                        <MiniChart data={selectedStock.chartData || []} color={priceColor(selectedStock)} id={selectedStock.ticker} />
                         <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 4 }}>30-day price history</div>
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                        {[["Sector",selectedStock.sector],["Volume",selectedStock.volume ? (selectedStock.volume/1e6).toFixed(1)+"M" : "N/A"],["Exchange","ASX"],["Currency","AUD"]].map(function(item){
+                        {[["Sector", selectedStock.sector], ["Volume", selectedStock.volume ? (selectedStock.volume / 1e6).toFixed(1) + "M" : "N/A"], ["Exchange", "ASX"], ["Currency", "AUD"]].map(function(item) {
                           return (
                             <div key={item[0]} style={{ background: "#050d1a", borderRadius: 6, padding: "8px 12px" }}>
                               <div style={{ color: "#4a6fa5", fontSize: 10, marginBottom: 2 }}>{item[0]}</div>
@@ -490,34 +589,32 @@ export default function App() {
           </div>
         )}
 
-        {/* CHARTS */}
         {tab === "charts" && (
           <div className="grid2">
             {loading
               ? <div style={Object.assign({}, S.card, { color: "#4a6fa5" })}>⟳ {loadingStatus}</div>
               : stocks.map(function(s) {
-                return (
-                  <div key={s.ticker} style={S.card} className="card-inner">
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                      <div>
-                        <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</span>
-                        <span style={{ color: "#4a6fa5", fontSize: 11, marginLeft: 8 }}>{s.name}</span>
+                  return (
+                    <div key={s.ticker} style={S.card} className="card-inner">
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                        <div>
+                          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</span>
+                          <span style={{ color: "#4a6fa5", fontSize: 11, marginLeft: 8 }}>{s.name}</span>
+                        </div>
+                        {s.error || !s.price
+                          ? <span style={{ color: "#f59e0b", fontSize: 11 }}>N/A</span>
+                          : <div style={s.change >= 0 ? S.up : S.down}>${s.price.toFixed(2)} {s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%</div>
+                        }
                       </div>
-                      {s.error || !s.price
-                        ? <span style={{ color: "#f59e0b", fontSize: 11 }}>N/A</span>
-                        : <div style={s.change >= 0 ? S.up : S.down}>${s.price.toFixed(2)} {s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%</div>
-                      }
+                      <MiniChart data={s.chartData || []} color={priceColor(s)} id={s.ticker} />
+                      <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 6 }}>30-day history · Worker / Yahoo</div>
                     </div>
-                    <MiniChart data={s.chartData||[]} color={priceColor(s)} />
-                    <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 6 }}>30-day history · Yahoo Finance</div>
-                  </div>
-                );
-              })
+                  );
+                })
             }
           </div>
         )}
 
-        {/* NEWS */}
         {tab === "news" && (
           <div style={S.card} className="card-inner">
             <div style={S.cardTitle}>ASX News & Announcements</div>
@@ -529,7 +626,7 @@ export default function App() {
                     <div style={{ color: "#e2e8f0", marginBottom: 6, lineHeight: 1.5 }}>{n.title}</div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <span style={Object.assign({}, S.badge("neutral"), { background: "#00d4ff10", color: "#00d4ff", border: "1px solid #00d4ff20" })}>{n.tag}</span>
-                      <span style={S.badge(n.sentiment)}>{n.sentiment==="up"?"▲ POSITIVE":n.sentiment==="down"?"▼ NEGATIVE":"● NEUTRAL"}</span>
+                      <span style={S.badge(n.sentiment)}>{n.sentiment === "up" ? "▲ POSITIVE" : n.sentiment === "down" ? "▼ NEGATIVE" : "● NEUTRAL"}</span>
                     </div>
                   </div>
                 </div>
@@ -538,7 +635,6 @@ export default function App() {
           </div>
         )}
 
-        {/* SHIPS */}
         {tab === "ships" && (
           <div className="grid2">
             <div style={S.card} className="card-inner">
@@ -552,7 +648,7 @@ export default function App() {
                       <div style={{ color: "#4a6fa5", fontSize: 11, marginTop: 2 }}>{ship.from} → {ship.to}</div>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <div style={Object.assign({}, S.badge(ship.status==="Underway"?"up":"neutral"), { marginBottom: 4 })}>{ship.status}</div>
+                      <div style={Object.assign({}, S.badge(ship.status === "Underway" ? "up" : "neutral"), { marginBottom: 4 })}>{ship.status}</div>
                       <div style={{ color: "#00d4ff", fontSize: 10 }}>{ship.relevance}</div>
                     </div>
                   </div>
@@ -577,7 +673,6 @@ export default function App() {
           </div>
         )}
 
-        {/* ALERTS */}
         {tab === "alerts" && (
           <div className="grid2">
             <div style={S.card} className="card-inner">
@@ -590,24 +685,38 @@ export default function App() {
                     <div>
                       <span style={{ color: "#00d4ff" }}>{a.ticker.replace(".AX","")}</span>
                       <span style={{ color: "#4a6fa5", margin: "0 8px" }}>price</span>
-                      <span style={a.condition==="above"?S.up:S.down}>{a.condition.toUpperCase()}</span>
+                      <span style={a.condition === "above" ? S.up : S.down}>{a.condition.toUpperCase()}</span>
                       <span style={{ color: "#e2e8f0", marginLeft: 8 }}>${a.price.toFixed(2)}</span>
                     </div>
-                    <button style={S.btnSm} onClick={function(){removeAlert(a.id);}}>REMOVE</button>
+                    <button style={S.btnSm} onClick={function() { removeAlert(a.id); }}>REMOVE</button>
                   </div>
                 );
               })}
               <div style={{ marginTop: 20 }}>
                 <div style={S.cardTitle}>Add New Alert</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <select style={S.select} value={newAlert.ticker} onChange={function(e){setNewAlert(function(p){return Object.assign({},p,{ticker:e.target.value});});}}>
-                    {stocks.map(function(s){return <option key={s.ticker} value={s.ticker}>{s.ticker.replace(".AX","")}</option>;})}
+                  <select style={S.select} value={newAlert.ticker} onChange={function(e) {
+                    setNewAlert(function(p) { return Object.assign({}, p, { ticker: e.target.value }); });
+                  }}>
+                    {stocks.map(function(s) {
+                      return <option key={s.ticker} value={s.ticker}>{s.ticker.replace(".AX","")}</option>;
+                    })}
                   </select>
-                  <select style={S.select} value={newAlert.condition} onChange={function(e){setNewAlert(function(p){return Object.assign({},p,{condition:e.target.value});});}}>
+                  <select style={S.select} value={newAlert.condition} onChange={function(e) {
+                    setNewAlert(function(p) { return Object.assign({}, p, { condition: e.target.value }); });
+                  }}>
                     <option value="above">ABOVE</option>
                     <option value="below">BELOW</option>
                   </select>
-                  <input style={Object.assign({},S.input,{width:90})} type="number" placeholder="Price" value={newAlert.price} onChange={function(e){setNewAlert(function(p){return Object.assign({},p,{price:e.target.value});});}} />
+                  <input
+                    style={Object.assign({}, S.input, { width: 90 })}
+                    type="number"
+                    placeholder="Price"
+                    value={newAlert.price}
+                    onChange={function(e) {
+                      setNewAlert(function(p) { return Object.assign({}, p, { price: e.target.value }); });
+                    }}
+                  />
                   <button style={S.btn} onClick={addAlert}>+ ADD ALERT</button>
                 </div>
               </div>
@@ -617,21 +726,20 @@ export default function App() {
               {triggeredAlerts.length === 0 && <div style={{ color: "#4a6fa5" }}>No alerts triggered yet.</div>}
               {triggeredAlerts.map(function(a, i) {
                 return (
-                  <div key={i} style={Object.assign({},S.alertRow,{borderColor:"#ff4d6d30",background:"#ff4d6d08"})}>
+                  <div key={i} style={Object.assign({}, S.alertRow, { borderColor: "#ff4d6d30", background: "#ff4d6d08" })}>
                     <div>
                       <span style={{ color: "#ff4d6d" }}>🔔 {a.ticker.replace(".AX","")}</span>
                       <span style={{ color: "#4a6fa5", margin: "0 6px" }}>{a.condition}</span>
                       <span style={{ color: "#e2e8f0" }}>${a.price.toFixed(2)}</span>
                       <span style={{ color: "#4a6fa5", fontSize: 10, marginLeft: 8 }}>@ {a.triggeredAt}</span>
                     </div>
-                    <button style={S.btnSm} onClick={function(){dismissTriggered(i);}}>✕</button>
+                    <button style={S.btnSm} onClick={function() { dismissTriggered(i); }}>✕</button>
                   </div>
                 );
               })}
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
