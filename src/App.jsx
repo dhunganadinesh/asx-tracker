@@ -314,7 +314,17 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap');
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { -webkit-text-size-adjust: 100%; }
         ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#050d1a} ::-webkit-scrollbar-thumb{background:#0f2d4a}
+        .nav-wrap { display: flex; gap: 4px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .nav-wrap::-webkit-scrollbar { display: none; }
+        @media (max-width: 700px) {
+          .grid2 { grid-template-columns: 1fr !important; }
+          .main-pad { padding: 10px !important; }
+          .card-inner { padding: 12px !important; }
+          .hide-sm { display: none !important; }
+          .search-input { font-size: 16px !important; }
+        }
       `}</style>
 
       {/* Header */}
@@ -348,7 +358,7 @@ export default function App() {
       </div>
 
       {/* Nav */}
-      <div style={S.nav}>
+      <div style={S.nav} className="nav-wrap">
         {[["watchlist","WATCHLIST"],["charts","CHARTS"],["news","NEWS"],["ships","SHIPS"],["alerts","ALERTS"]].map(function(item) {
           return <button key={item[0]} style={S.navBtn(tab===item[0])} onClick={function(){setTab(item[0]);}}>{item[1]}</button>;
         })}
@@ -368,12 +378,12 @@ export default function App() {
         </div>
       )}
 
-      <div style={S.main}>
+      <div style={S.main} className="main-pad">
 
         {/* WATCHLIST */}
         {tab === "watchlist" && (
-          <div style={S.grid2}>
-            <div style={S.card}>
+          <div className="grid2">
+            <div style={S.card} className="card-inner">
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                 <span style={S.cardTitle}>ASX Watchlist</span>
                 <span style={{ color: "#4a6fa5", fontSize: "10px" }}>Yahoo Finance · ~15min delay</span>
@@ -382,7 +392,7 @@ export default function App() {
               {/* Search */}
               <div style={{ position: "relative", marginBottom: 12 }}>
                 <input
-                  style={Object.assign({}, S.input, { width: "100%", paddingLeft: 28 })}
+                  style={Object.assign({}, S.input, { width: "100%", paddingLeft: 28 })} className="search-input"
                   placeholder="Search stock name or ticker to add..."
                   value={searchQuery}
                   onChange={function(e){ handleSearch(e.target.value); }}
@@ -424,7 +434,7 @@ export default function App() {
                           : <><div style={{ color: "#e2e8f0" }}>${s.price.toFixed(2)}</div><div style={s.change >= 0 ? S.up : S.down}>{s.change >= 0 ? "▲" : "▼"} {Math.abs(s.change)}%</div></>
                         }
                       </div>
-                      <Sparkline data={s.chartData||[]} color={priceColor(s)} />
+                      <span className="hide-sm"><Sparkline data={s.chartData||[]} color={priceColor(s)} /></span>
                       <button onClick={function(e){e.stopPropagation();removeStock(s.ticker);}} style={{ background:"transparent", border:"none", color:"#4a6fa5", cursor:"pointer", fontSize:14, padding:"0 4px", flexShrink:0 }}>✕</button>
                     </div>
                   );
@@ -433,7 +443,7 @@ export default function App() {
             </div>
 
             {selectedStock && (
-              <div style={S.card}>
+              <div style={S.card} className="card-inner">
                 <div style={S.cardTitle}>Detail — {selectedStock.ticker}</div>
                 {selectedStock.error || !selectedStock.price
                   ? (
@@ -482,12 +492,12 @@ export default function App() {
 
         {/* CHARTS */}
         {tab === "charts" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div className="grid2">
             {loading
               ? <div style={Object.assign({}, S.card, { color: "#4a6fa5" })}>⟳ {loadingStatus}</div>
               : stocks.map(function(s) {
                 return (
-                  <div key={s.ticker} style={S.card}>
+                  <div key={s.ticker} style={S.card} className="card-inner">
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                       <div>
                         <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</span>
@@ -509,7 +519,7 @@ export default function App() {
 
         {/* NEWS */}
         {tab === "news" && (
-          <div style={S.card}>
+          <div style={S.card} className="card-inner">
             <div style={S.cardTitle}>ASX News & Announcements</div>
             {NEWS.map(function(n) {
               return (
@@ -530,8 +540,8 @@ export default function App() {
 
         {/* SHIPS */}
         {tab === "ships" && (
-          <div style={S.grid2}>
-            <div style={S.card}>
+          <div className="grid2">
+            <div style={S.card} className="card-inner">
               <div style={S.cardTitle}>Vessel Intelligence — Australian Ports</div>
               {SHIPS.map(function(ship) {
                 return (
@@ -549,7 +559,7 @@ export default function App() {
                 );
               })}
             </div>
-            <div style={S.card}>
+            <div style={S.card} className="card-inner">
               <div style={S.cardTitle}>Signal Intelligence</div>
               {[
                 { color: "#00d4ff", label: "IRON ORE SIGNAL", text: "3 bulk carriers departing Pilbara ports this week. Positive signal for BHP, RIO, FMG." },
@@ -569,8 +579,8 @@ export default function App() {
 
         {/* ALERTS */}
         {tab === "alerts" && (
-          <div style={S.grid2}>
-            <div style={S.card}>
+          <div className="grid2">
+            <div style={S.card} className="card-inner">
               <div style={S.cardTitle}>Active Alerts</div>
               <div style={{ color: "#4a6fa5", fontSize: 10, marginBottom: 12 }}>Alerts check on each price refresh</div>
               {alerts.length === 0 && <div style={{ color: "#4a6fa5" }}>No alerts set.</div>}
@@ -602,7 +612,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div style={S.card}>
+            <div style={S.card} className="card-inner">
               <div style={S.cardTitle}>Triggered Alerts History</div>
               {triggeredAlerts.length === 0 && <div style={{ color: "#4a6fa5" }}>No alerts triggered yet.</div>}
               {triggeredAlerts.map(function(a, i) {
