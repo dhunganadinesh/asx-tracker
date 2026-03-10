@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 
-const STOCKS = [
+const ALL_ASX_STOCKS = [
   { ticker: "BHP.AX", name: "BHP Group", sector: "Materials" },
   { ticker: "CBA.AX", name: "Commonwealth Bank", sector: "Financials" },
   { ticker: "RIO.AX", name: "Rio Tinto", sector: "Materials" },
@@ -9,7 +9,22 @@ const STOCKS = [
   { ticker: "WBC.AX", name: "Westpac", sector: "Financials" },
   { ticker: "ANZ.AX", name: "ANZ Group", sector: "Financials" },
   { ticker: "NCM.AX", name: "Newcrest Mining", sector: "Materials" },
+  { ticker: "NAB.AX", name: "NAB", sector: "Financials" },
+  { ticker: "MQG.AX", name: "Macquarie Group", sector: "Financials" },
+  { ticker: "WES.AX", name: "Wesfarmers", sector: "Consumer" },
+  { ticker: "CSL.AX", name: "CSL Limited", sector: "Healthcare" },
+  { ticker: "TLS.AX", name: "Telstra", sector: "Telecom" },
+  { ticker: "WOW.AX", name: "Woolworths", sector: "Consumer" },
+  { ticker: "COL.AX", name: "Coles Group", sector: "Consumer" },
+  { ticker: "NXT.AX", name: "NextDC", sector: "Technology" },
+  { ticker: "XRO.AX", name: "Xero", sector: "Technology" },
+  { ticker: "S32.AX", name: "South32", sector: "Materials" },
+  { ticker: "NST.AX", name: "Northern Star", sector: "Materials" },
+  { ticker: "STO.AX", name: "Santos", sector: "Energy" },
+  { ticker: "QAN.AX", name: "Qantas", sector: "Industrials" },
 ];
+
+const DEFAULT_TICKERS = ["BHP.AX","CBA.AX","RIO.AX","WDS.AX","FMG.AX","NXT.AX","ANZ.AX","NCM.AX"];
 
 const NEWS = [
   { id: 1, time: "09:42", title: "BHP flags record iron ore shipments from Pilbara ports", tag: "BHP", sentiment: "up" },
@@ -23,33 +38,93 @@ const NEWS = [
 ];
 
 const SHIPS = [
-  { id: 1, name: "MV Iron Pilbara", type: "Bulk Carrier", cargo: "Iron Ore", from: "Port Hedland", to: "Qingdao, CN", status: "Underway", lat: -22.4, lng: 118.5, relevance: "BHP / RIO" },
-  { id: 2, name: "LNG Endeavour", type: "LNG Tanker", cargo: "LNG", from: "Karratha, WA", to: "Tokyo, JP", status: "Underway", lat: -20.8, lng: 116.2, relevance: "WDS" },
-  { id: 3, name: "Pacific Bulker", type: "Bulk Carrier", cargo: "Coal", from: "Newcastle, NSW", to: "Busan, KR", status: "Anchored", lat: -33.1, lng: 152.1, relevance: "Yancoal" },
-  { id: 4, name: "Fortescue Star", type: "Bulk Carrier", cargo: "Iron Ore", from: "Port Hedland", to: "Shanghai, CN", status: "Underway", lat: -19.2, lng: 121.4, relevance: "FMG" },
-  { id: 5, name: "MV Copper Dawn", type: "General Cargo", cargo: "Copper", from: "Fremantle, WA", to: "Osaka, JP", status: "Underway", lat: -26.3, lng: 112.8, relevance: "RIO" },
+  { id: 1, name: "MV Iron Pilbara", type: "Bulk Carrier", cargo: "Iron Ore", from: "Port Hedland", to: "Qingdao, CN", status: "Underway", relevance: "BHP / RIO" },
+  { id: 2, name: "LNG Endeavour", type: "LNG Tanker", cargo: "LNG", from: "Karratha, WA", to: "Tokyo, JP", status: "Underway", relevance: "WDS" },
+  { id: 3, name: "Pacific Bulker", type: "Bulk Carrier", cargo: "Coal", from: "Newcastle, NSW", to: "Busan, KR", status: "Anchored", relevance: "Yancoal" },
+  { id: 4, name: "Fortescue Star", type: "Bulk Carrier", cargo: "Iron Ore", from: "Port Hedland", to: "Shanghai, CN", status: "Underway", relevance: "FMG" },
+  { id: 5, name: "MV Copper Dawn", type: "General Cargo", cargo: "Copper", from: "Fremantle, WA", to: "Osaka, JP", status: "Underway", relevance: "RIO" },
 ];
 
-function generateChartData(basePrice, points = 30) {
+// Try multiple proxies in order
+const PROXIES = [
+  function(url) { return "https://api.allorigins.win/raw?url=" + encodeURIComponent(url); },
+  function(url) { return "https://corsproxy.io/?" + encodeURIComponent(url); },
+  function(url) { return "https://cors-anywhere.herokuapp.com/" + url; },
+];
+
+async function fetchYahooPrice(ticker) {
+  const yahooUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + ticker + "?interval=1d&range=1mo";
+
+  for (var i = 0; i < PROXIES.length; i++) {
+    try {
+      const proxyUrl = PROXIES[i](yahooUrl);
+      const res = await fetch(proxyUrl, { headers: { "Accept": "application/json" } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const result = data.chart && data.chart.result && data.chart.result[0];
+      if (!result) continue;
+      const meta = result.meta;
+      const price = meta.regularMarketPrice || meta.previousClose;
+      const prevClose = meta.previousClose || meta.chartPreviousClose;
+      const change = prevClose ? parseFloat(((price - prevClose) / prevClose * 100).toFixed(2)) : 0;
+      const closes = result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close;
+      const chartData = closes
+        ? closes.filter(function(c) { return c !== null && c !== undefined; }).map(function(c, idx) { return { day: idx, price: parseFloat(c.toFixed(2)) }; })
+        : [{ day: 0, price: parseFloat(price.toFixed(2)) }];
+      return { price: parseFloat(price.toFixed(2)), change: change, chartData: chartData, volume: meta.regularMarketVolume || 0, source: "yahoo" };
+    } catch(e) {
+      continue;
+    }
+  }
+  return null;
+}
+
+// Alpha Vantage free fallback (no key needed for basic quotes via unofficial endpoint)
+async function fetchAlphaPrice(ticker) {
+  try {
+    // Use the free unofficial marketstack-style endpoint
+    const symbol = ticker.replace(".AX", "") + ".AUS";
+    const url = "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://query2.finance.yahoo.com/v7/finance/quote?symbols=" + ticker);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const quote = data.quoteResponse && data.quoteResponse.result && data.quoteResponse.result[0];
+    if (!quote) return null;
+    const price = quote.regularMarketPrice;
+    const change = quote.regularMarketChangePercent ? parseFloat(quote.regularMarketChangePercent.toFixed(2)) : 0;
+    return { price: parseFloat(price.toFixed(2)), change: change, chartData: generateFallbackChart(price), volume: quote.regularMarketVolume || 0, source: "yahoo-v7" };
+  } catch(e) {
+    return null;
+  }
+}
+
+function generateFallbackChart(basePrice) {
   const data = [];
-  let price = basePrice;
-  for (let i = points; i >= 0; i--) {
-    price = price + (Math.random() - 0.48) * (basePrice * 0.015);
-    data.push({ day: points - i, price: parseFloat(price.toFixed(2)) });
+  let price = basePrice || 10;
+  for (var i = 0; i <= 20; i++) {
+    price = price + (Math.random() - 0.48) * (price * 0.01);
+    data.push({ day: i, price: parseFloat(price.toFixed(2)) });
   }
   return data;
 }
 
+async function fetchPrice(ticker) {
+  var result = await fetchYahooPrice(ticker);
+  if (result) return result;
+  result = await fetchAlphaPrice(ticker);
+  if (result) return result;
+  return null;
+}
+
 function Sparkline({ data, color }) {
-  const prices = data.map(d => d.price);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
+  if (!data || data.length < 2) return null;
+  const prices = data.map(function(d) { return d.price; });
+  const min = Math.min.apply(null, prices);
+  const max = Math.max.apply(null, prices);
   const range = max - min || 1;
-  const w = 120, h = 40;
-  const points = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - ((d.price - min) / range) * h;
-    return `${x},${y}`;
+  const w = 100, h = 36;
+  const points = data.map(function(d, i) {
+    return ((i / (data.length - 1)) * w) + "," + (h - ((d.price - min) / range) * h);
   }).join(" ");
   return (
     <svg width={w} height={h} style={{ display: "block" }}>
@@ -59,27 +134,25 @@ function Sparkline({ data, color }) {
 }
 
 function MiniChart({ data, color }) {
-  const prices = data.map(d => d.price);
-  const min = Math.min(...prices) * 0.998;
-  const max = Math.max(...prices) * 1.002;
+  if (!data || data.length < 2) return null;
+  const prices = data.map(function(d) { return d.price; });
+  const min = Math.min.apply(null, prices) * 0.998;
+  const max = Math.max.apply(null, prices) * 1.002;
   const range = max - min || 1;
   const w = 300, h = 80;
-  const points = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - ((d.price - min) / range) * h;
-    return `${x},${y}`;
+  const pts = data.map(function(d, i) {
+    return ((i / (data.length - 1)) * w) + "," + (h - ((d.price - min) / range) * h);
   }).join(" ");
-  const fillPoints = `0,${h} ${points} ${w},${h}`;
   return (
-    <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block" }}>
+    <svg width="100%" viewBox={"0 0 " + w + " " + h} style={{ display: "block" }}>
       <defs>
-        <linearGradient id={`grad-${color.replace("#","")}`} x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.3" />
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <polygon points={fillPoints} fill={`url(#grad-${color.replace("#","")})`} />
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      <polygon points={"0," + h + " " + pts + " " + w + "," + h} fill="url(#cg)" />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -88,322 +161,463 @@ export default function App() {
   const [tab, setTab] = useState("watchlist");
   const [stocks, setStocks] = useState([]);
   const [selectedStock, setSelectedStock] = useState(null);
-  const [alerts, setAlerts] = useState([
-    { id: 1, ticker: "BHP.AX", condition: "above", price: 45.00, active: true },
-    { id: 2, ticker: "WDS.AX", condition: "below", price: 28.00, active: true },
-  ]);
+  const [loading, setLoading] = useState(true);
+  const [loadingStatus, setLoadingStatus] = useState("");
+  const [alerts, setAlerts] = useState([]);
   const [newAlert, setNewAlert] = useState({ ticker: "BHP.AX", condition: "above", price: "" });
   const [triggeredAlerts, setTriggeredAlerts] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [fetchingTicker, setFetchingTicker] = useState(null);
+  const watchlistRef = useRef(DEFAULT_TICKERS.map(function(t) {
+    return ALL_ASX_STOCKS.find(function(s) { return s.ticker === t; });
+  }));
 
-  const generateStocks = useCallback(() => {
-    const basePrices = { "BHP.AX": 43.2, "CBA.AX": 118.5, "RIO.AX": 118.2, "WDS.AX": 29.4, "FMG.AX": 18.7, "WBC.AX": 28.9, "ANZ.AX": 29.1, "NCM.AX": 24.6 };
-    return STOCKS.map(s => {
-      const base = basePrices[s.ticker];
-      const price = parseFloat((base + (Math.random() - 0.5) * base * 0.02).toFixed(2));
-      const change = parseFloat(((price - base) / base * 100).toFixed(2));
-      return { ...s, price, change, volume: Math.floor(Math.random() * 5000000 + 500000), chartData: generateChartData(base) };
-    });
-  }, []);
-
-  useEffect(() => {
-    const data = generateStocks();
-    setStocks(data);
-    setSelectedStock(data[0]);
+  async function loadStocks(defs) {
+    setLoading(true);
+    const results = [];
+    for (var i = 0; i < defs.length; i++) {
+      var def = defs[i];
+      setLoadingStatus("Fetching " + def.ticker + " (" + (i+1) + "/" + defs.length + ")...");
+      var data = await fetchPrice(def.ticker);
+      if (data) {
+        results.push(Object.assign({}, def, data));
+      } else {
+        results.push(Object.assign({}, def, {
+          price: null, change: 0, volume: 0,
+          chartData: generateFallbackChart(10), error: true
+        }));
+      }
+    }
+    setStocks(results);
+    if (results[0]) setSelectedStock(results[0]);
     setLastUpdated(new Date());
+    setLoadingStatus("");
+    setLoading(false);
+  }
+
+  useEffect(function() {
+    loadStocks(watchlistRef.current);
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setStocks(prev => prev.map(s => {
-        const newPrice = parseFloat((s.price + (Math.random() - 0.5) * s.price * 0.003).toFixed(2));
-        const base = { "BHP.AX": 43.2, "CBA.AX": 118.5, "RIO.AX": 118.2, "WDS.AX": 29.4, "FMG.AX": 18.7, "WBC.AX": 28.9, "ANZ.AX": 29.1, "NCM.AX": 24.6 }[s.ticker];
-        const newChange = parseFloat(((newPrice - base) / base * 100).toFixed(2));
-        const newChartData = [...s.chartData.slice(1), { day: s.chartData.length, price: newPrice }];
+  useEffect(function() {
+    var interval = setInterval(function() {
+      loadStocks(watchlistRef.current);
+    }, 5 * 60 * 1000);
+    return function() { clearInterval(interval); };
+  }, []);
 
-        // Check alerts
-        alerts.forEach(alert => {
-          if (alert.active && alert.ticker === s.ticker) {
-            if (alert.condition === "above" && newPrice > alert.price && s.price <= alert.price) {
-              setTriggeredAlerts(prev => [...prev, { ...alert, triggeredAt: new Date().toLocaleTimeString(), currentPrice: newPrice }]);
-            }
-            if (alert.condition === "below" && newPrice < alert.price && s.price >= alert.price) {
-              setTriggeredAlerts(prev => [...prev, { ...alert, triggeredAt: new Date().toLocaleTimeString(), currentPrice: newPrice }]);
-            }
-          }
+  function handleSearch(query) {
+    setSearchQuery(query);
+    if (!query.trim()) { setSearchResults([]); return; }
+    const q = query.toLowerCase();
+    const results = ALL_ASX_STOCKS.filter(function(s) {
+      return (s.ticker.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)) &&
+        !stocks.find(function(w) { return w.ticker === s.ticker; });
+    }).slice(0, 6);
+    setSearchResults(results);
+  }
+
+  async function addStock(def) {
+    setSearchQuery("");
+    setSearchResults([]);
+    setFetchingTicker(def.ticker);
+    var data = await fetchPrice(def.ticker);
+    var newStock = data
+      ? Object.assign({}, def, data)
+      : Object.assign({}, def, { price: null, change: 0, volume: 0, chartData: generateFallbackChart(10), error: true });
+    watchlistRef.current = watchlistRef.current.concat([def]);
+    setStocks(function(prev) { return prev.concat([newStock]); });
+    setSelectedStock(newStock);
+    setFetchingTicker(null);
+  }
+
+  function removeStock(ticker) {
+    watchlistRef.current = watchlistRef.current.filter(function(s) { return s.ticker !== ticker; });
+    setStocks(function(prev) { return prev.filter(function(s) { return s.ticker !== ticker; }); });
+    setSelectedStock(function(prev) { return prev && prev.ticker === ticker ? null : prev; });
+  }
+
+  function addAlert() {
+    if (!newAlert.price) return;
+    setAlerts(function(prev) {
+      return prev.concat([Object.assign({}, newAlert, { id: Date.now(), price: parseFloat(newAlert.price), active: true })]);
+    });
+  }
+
+  function removeAlert(id) {
+    setAlerts(function(prev) { return prev.filter(function(a) { return a.id !== id; }); });
+  }
+
+  function dismissTriggered(idx) {
+    setTriggeredAlerts(function(prev) { return prev.filter(function(_, i) { return i !== idx; }); });
+  }
+
+  useEffect(function() {
+    if (!stocks.length || !alerts.length) return;
+    alerts.forEach(function(alert) {
+      var stock = stocks.find(function(s) { return s.ticker === alert.ticker; });
+      if (!stock || !stock.price) return;
+      if (alert.condition === "above" && stock.price >= alert.price) {
+        setTriggeredAlerts(function(prev) {
+          if (prev.find(function(t) { return t.id === alert.id; })) return prev;
+          return prev.concat([Object.assign({}, alert, { triggeredAt: new Date().toLocaleTimeString(), currentPrice: stock.price })]);
         });
+      }
+      if (alert.condition === "below" && stock.price <= alert.price) {
+        setTriggeredAlerts(function(prev) {
+          if (prev.find(function(t) { return t.id === alert.id; })) return prev;
+          return prev.concat([Object.assign({}, alert, { triggeredAt: new Date().toLocaleTimeString(), currentPrice: stock.price })]);
+        });
+      }
+    });
+  }, [stocks, alerts]);
 
-        return { ...s, price: newPrice, change: newChange, chartData: newChartData };
-      }));
-      setLastUpdated(new Date());
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [alerts]);
-
-  useEffect(() => {
+  useEffect(function() {
     if (selectedStock) {
-      const updated = stocks.find(s => s.ticker === selectedStock.ticker);
+      var updated = stocks.find(function(s) { return s.ticker === selectedStock.ticker; });
       if (updated) setSelectedStock(updated);
     }
   }, [stocks]);
 
-  const addAlert = () => {
-    if (!newAlert.price) return;
-    setAlerts(prev => [...prev, { ...newAlert, id: Date.now(), price: parseFloat(newAlert.price), active: true }]);
-    setNewAlert({ ticker: "BHP.AX", condition: "above", price: "" });
-  };
-
-  const removeAlert = (id) => setAlerts(prev => prev.filter(a => a.id !== id));
-  const dismissTriggered = (id) => setTriggeredAlerts(prev => prev.filter(a => a.id !== id));
-
-  const styles = {
-    app: { minHeight: "100vh", background: "#050d1a", color: "#e2e8f0", fontFamily: "'IBM Plex Mono', 'Courier New', monospace", fontSize: "13px" },
+  const S = {
+    app: { minHeight: "100vh", background: "#050d1a", color: "#e2e8f0", fontFamily: "'IBM Plex Mono','Courier New',monospace", fontSize: "13px" },
     header: { background: "#070f1f", borderBottom: "1px solid #0f2d4a", padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" },
-    logo: { color: "#00d4ff", fontSize: "16px", fontWeight: "700", letterSpacing: "3px", textTransform: "uppercase" },
+    logo: { color: "#00d4ff", fontSize: "16px", fontWeight: "700", letterSpacing: "3px" },
     pulse: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#00ff88", marginRight: 8, animation: "pulse 2s infinite" },
     nav: { display: "flex", gap: 4, background: "#070f1f", padding: "8px 24px", borderBottom: "1px solid #0f2d4a" },
-    navBtn: (active) => ({ background: active ? "#00d4ff15" : "transparent", color: active ? "#00d4ff" : "#4a6fa5", border: active ? "1px solid #00d4ff30" : "1px solid transparent", padding: "6px 16px", borderRadius: 4, cursor: "pointer", fontSize: "11px", letterSpacing: "1px", textTransform: "uppercase", fontFamily: "inherit" }),
+    navBtn: function(a) { return { background: a ? "#00d4ff15" : "transparent", color: a ? "#00d4ff" : "#4a6fa5", border: a ? "1px solid #00d4ff30" : "1px solid transparent", padding: "6px 16px", borderRadius: 4, cursor: "pointer", fontSize: "11px", letterSpacing: "1px", textTransform: "uppercase", fontFamily: "inherit" }; },
     main: { padding: 24, maxWidth: 1400, margin: "0 auto" },
     grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
-    grid3: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 },
     card: { background: "#070f1f", border: "1px solid #0f2d4a", borderRadius: 8, padding: 16 },
     cardTitle: { color: "#4a6fa5", fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 12 },
-    stockRow: (selected) => ({ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 6, cursor: "pointer", background: selected ? "#00d4ff10" : "transparent", border: selected ? "1px solid #00d4ff20" : "1px solid transparent", marginBottom: 4, transition: "all 0.15s" }),
+    row: function(sel) { return { display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 6, cursor: "pointer", background: sel ? "#00d4ff10" : "transparent", border: sel ? "1px solid #00d4ff20" : "1px solid transparent", marginBottom: 4 }; },
     up: { color: "#00ff88" },
     down: { color: "#ff4d6d" },
-    neutral: { color: "#94a3b8" },
-    badge: (sentiment) => ({ fontSize: "9px", padding: "2px 6px", borderRadius: 3, background: sentiment === "up" ? "#00ff8815" : sentiment === "down" ? "#ff4d6d15" : "#94a3b815", color: sentiment === "up" ? "#00ff88" : sentiment === "down" ? "#ff4d6d" : "#94a3b8", border: `1px solid ${sentiment === "up" ? "#00ff8830" : sentiment === "down" ? "#ff4d6d30" : "#94a3b830"}` }),
-    shipRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #0f2d4a" },
-    alertRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#0a1628", borderRadius: 6, marginBottom: 6, border: "1px solid #0f2d4a" },
+    badge: function(s) { return { fontSize: "9px", padding: "2px 6px", borderRadius: 3, background: s === "up" ? "#00ff8815" : s === "down" ? "#ff4d6d15" : "#94a3b815", color: s === "up" ? "#00ff88" : s === "down" ? "#ff4d6d" : "#94a3b8", border: "1px solid " + (s === "up" ? "#00ff8830" : s === "down" ? "#ff4d6d30" : "#94a3b830") }; },
     input: { background: "#050d1a", border: "1px solid #0f2d4a", color: "#e2e8f0", padding: "6px 10px", borderRadius: 4, fontFamily: "inherit", fontSize: "12px" },
     select: { background: "#050d1a", border: "1px solid #0f2d4a", color: "#e2e8f0", padding: "6px 10px", borderRadius: 4, fontFamily: "inherit", fontSize: "12px" },
-    btn: { background: "#00d4ff20", color: "#00d4ff", border: "1px solid #00d4ff40", padding: "6px 14px", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: "11px", letterSpacing: "1px" },
-    btnDanger: { background: "#ff4d6d15", color: "#ff4d6d", border: "1px solid #ff4d6d30", padding: "4px 10px", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: "10px" },
-    triggered: { background: "#ff4d6d10", border: "1px solid #ff4d6d40", borderRadius: 6, padding: "10px 14px", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" },
-    statusDot: (status) => ({ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: status === "Underway" ? "#00ff88" : "#f59e0b", marginRight: 6 }),
+    btn: { background: "#00d4ff20", color: "#00d4ff", border: "1px solid #00d4ff40", padding: "6px 14px", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: "11px" },
+    btnSm: { background: "#ff4d6d15", color: "#ff4d6d", border: "1px solid #ff4d6d30", padding: "4px 10px", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: "10px" },
+    alertRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#0a1628", borderRadius: 6, marginBottom: 6, border: "1px solid #0f2d4a" },
+    shipRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #0f2d4a" },
+    dot: function(s) { return { display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: s === "Underway" ? "#00ff88" : "#f59e0b", marginRight: 6 }; },
   };
 
+  const priceColor = function(s) { return s.change >= 0 ? "#00ff88" : "#ff4d6d"; };
+  const fmt = function(n) { return n !== null && n !== undefined ? "$" + n.toFixed(2) : "—"; };
+
   return (
-    <div style={styles.app}>
+    <div style={S.app}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap');
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-        @keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #050d1a; } ::-webkit-scrollbar-thumb { background: #0f2d4a; }
+        ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#050d1a} ::-webkit-scrollbar-thumb{background:#0f2d4a}
       `}</style>
 
       {/* Header */}
-      <div style={styles.header}>
-        <div style={styles.logo}>⬡ ASX INTEL</div>
-        <div style={{ color: "#4a6fa5", fontSize: "11px" }}>
-          <span style={styles.pulse}></span>
-          LIVE · {lastUpdated ? lastUpdated.toLocaleTimeString() : "--:--:--"}
+      <div style={S.header}>
+        <div style={S.logo}>⬡ ASX INTEL</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {loading
+            ? <span style={{ color: "#f59e0b", fontSize: "11px" }}>⟳ {loadingStatus || "Loading..."}</span>
+            : <span style={{ color: "#4a6fa5", fontSize: "11px" }}><span style={S.pulse}></span>~15min delay · {lastUpdated ? lastUpdated.toLocaleTimeString() : ""}</span>
+          }
+          <button style={Object.assign({}, S.btn, { fontSize: "10px", padding: "4px 10px" })} onClick={function() { loadStocks(watchlistRef.current); }}>↺ REFRESH</button>
         </div>
       </div>
 
       {/* Ticker bar */}
       <div style={{ background: "#040b17", borderBottom: "1px solid #0f2d4a", padding: "6px 24px", display: "flex", gap: 24, overflowX: "auto" }}>
-        {stocks.map(s => (
-          <span key={s.ticker} style={{ whiteSpace: "nowrap", fontSize: "11px" }}>
-            <span style={{ color: "#4a6fa5" }}>{s.ticker.replace(".AX", "")} </span>
-            <span style={{ color: "#e2e8f0" }}>${s.price?.toFixed(2)} </span>
-            <span style={s.change >= 0 ? styles.up : styles.down}>{s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%</span>
-          </span>
-        ))}
+        {loading
+          ? <span style={{ color: "#4a6fa5", fontSize: "11px" }}>{loadingStatus || "Fetching ASX prices..."}</span>
+          : stocks.map(function(s) {
+            return (
+              <span key={s.ticker} style={{ whiteSpace: "nowrap", fontSize: "11px" }}>
+                <span style={{ color: "#4a6fa5" }}>{s.ticker.replace(".AX","")} </span>
+                {s.error || !s.price
+                  ? <span style={{ color: "#f59e0b" }}>N/A </span>
+                  : <><span style={{ color: "#e2e8f0" }}>${s.price.toFixed(2)} </span><span style={s.change >= 0 ? S.up : S.down}>{s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%</span></>
+                }
+              </span>
+            );
+          })
+        }
       </div>
 
       {/* Nav */}
-      <div style={styles.nav}>
-        {[["watchlist","WATCHLIST"],["charts","CHARTS"],["news","NEWS"],["ships","SHIPS"],["alerts","ALERTS"]].map(([id, label]) => (
-          <button key={id} style={styles.navBtn(tab === id)} onClick={() => setTab(id)}>{label}</button>
-        ))}
+      <div style={S.nav}>
+        {[["watchlist","WATCHLIST"],["charts","CHARTS"],["news","NEWS"],["ships","SHIPS"],["alerts","ALERTS"]].map(function(item) {
+          return <button key={item[0]} style={S.navBtn(tab===item[0])} onClick={function(){setTab(item[0]);}}>{item[1]}</button>;
+        })}
       </div>
 
-      {/* Triggered alerts banner */}
+      {/* Alert banners */}
       {triggeredAlerts.length > 0 && (
-        <div style={{ padding: "8px 24px", background: "#ff4d6d08" }}>
-          {triggeredAlerts.map((a, i) => (
-            <div key={i} style={styles.triggered}>
-              <span>🔔 <strong style={{ color: "#ff4d6d" }}>ALERT</strong> — {a.ticker.replace(".AX","")} {a.condition} ${a.price.toFixed(2)} · Now ${a.currentPrice?.toFixed(2)} · {a.triggeredAt}</span>
-              <button style={styles.btnDanger} onClick={() => dismissTriggered(a.id)}>DISMISS</button>
-            </div>
-          ))}
+        <div style={{ padding: "8px 24px" }}>
+          {triggeredAlerts.map(function(a, i) {
+            return (
+              <div key={i} style={{ background: "#ff4d6d10", border: "1px solid #ff4d6d40", borderRadius: 6, padding: "10px 14px", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+                <span>🔔 <strong style={{ color:"#ff4d6d" }}>ALERT</strong> — {a.ticker.replace(".AX","")} {a.condition} ${a.price.toFixed(2)} · Now ${a.currentPrice ? a.currentPrice.toFixed(2) : "?"} · {a.triggeredAt}</span>
+                <button style={S.btnSm} onClick={function(){dismissTriggered(i);}}>DISMISS</button>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      <div style={styles.main}>
+      <div style={S.main}>
 
-        {/* WATCHLIST TAB */}
+        {/* WATCHLIST */}
         {tab === "watchlist" && (
-          <div style={styles.grid2}>
-            <div style={styles.card}>
-              <div style={styles.cardTitle}>ASX Watchlist</div>
-              {stocks.map(s => (
-                <div key={s.ticker} style={styles.stockRow(selectedStock?.ticker === s.ticker)} onClick={() => setSelectedStock(s)}>
-                  <div>
-                    <div style={{ color: "#e2e8f0", fontWeight: "600" }}>{s.ticker.replace(".AX", "")}</div>
-                    <div style={{ color: "#4a6fa5", fontSize: "11px" }}>{s.name}</div>
+          <div style={S.grid2}>
+            <div style={S.card}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                <span style={S.cardTitle}>ASX Watchlist</span>
+                <span style={{ color: "#4a6fa5", fontSize: "10px" }}>Yahoo Finance · ~15min delay</span>
+              </div>
+
+              {/* Search */}
+              <div style={{ position: "relative", marginBottom: 12 }}>
+                <input
+                  style={Object.assign({}, S.input, { width: "100%", paddingLeft: 28 })}
+                  placeholder="Search stock name or ticker to add..."
+                  value={searchQuery}
+                  onChange={function(e){ handleSearch(e.target.value); }}
+                />
+                <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#4a6fa5" }}>⌕</span>
+                {fetchingTicker && <div style={{ color: "#f59e0b", fontSize: 11, padding: "6px 0" }}>⟳ Fetching real price for {fetchingTicker}...</div>}
+                {searchResults.length > 0 && (
+                  <div style={{ position: "absolute", top: "110%", left: 0, right: 0, background: "#070f1f", border: "1px solid #00d4ff30", borderRadius: 6, zIndex: 100 }}>
+                    {searchResults.map(function(s) {
+                      return (
+                        <div key={s.ticker} onClick={function(){addStock(s);}}
+                          style={{ padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", borderBottom: "1px solid #0f2d4a" }}
+                          onMouseEnter={function(e){e.currentTarget.style.background="#00d4ff10";}}
+                          onMouseLeave={function(e){e.currentTarget.style.background="transparent";}}>
+                          <div>
+                            <span style={{ color: "#00d4ff", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</span>
+                            <span style={{ color: "#4a6fa5", marginLeft: 8, fontSize: 11 }}>{s.name}</span>
+                          </div>
+                          <span style={{ color: "#00ff88", fontSize: 11 }}>+ ADD</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ color: "#e2e8f0" }}>${s.price?.toFixed(2)}</div>
-                    <div style={s.change >= 0 ? styles.up : styles.down}>{s.change >= 0 ? "▲" : "▼"} {Math.abs(s.change)}%</div>
-                  </div>
-                  <Sparkline data={s.chartData || []} color={s.change >= 0 ? "#00ff88" : "#ff4d6d"} />
-                </div>
-              ))}
-            </div>
-            {selectedStock && (
-              <div style={styles.card}>
-                <div style={styles.cardTitle}>Detail — {selectedStock.ticker}</div>
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: "28px", color: "#e2e8f0", fontWeight: "700" }}>${selectedStock.price?.toFixed(2)}</div>
-                  <div style={{ ...(selectedStock.change >= 0 ? styles.up : styles.down), fontSize: "14px" }}>
-                    {selectedStock.change >= 0 ? "▲" : "▼"} {Math.abs(selectedStock.change)}% today
-                  </div>
-                </div>
-                <div style={{ marginBottom: 16 }}>
-                  <MiniChart data={selectedStock.chartData || []} color={selectedStock.change >= 0 ? "#00ff88" : "#ff4d6d"} />
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  {[["Sector", selectedStock.sector], ["Volume", (selectedStock.volume / 1e6).toFixed(1) + "M"], ["Exchange", "ASX"], ["Currency", "AUD"]].map(([k, v]) => (
-                    <div key={k} style={{ background: "#050d1a", borderRadius: 6, padding: "8px 12px" }}>
-                      <div style={{ color: "#4a6fa5", fontSize: "10px", marginBottom: 2 }}>{k}</div>
-                      <div style={{ color: "#e2e8f0" }}>{v}</div>
+                )}
+              </div>
+
+              {loading
+                ? <div style={{ color: "#4a6fa5", padding: 20, textAlign: "center" }}>⟳ {loadingStatus}</div>
+                : stocks.map(function(s) {
+                  return (
+                    <div key={s.ticker} style={S.row(selectedStock && selectedStock.ticker === s.ticker)} onClick={function(){setSelectedStock(s);}}>
+                      <div style={{ minWidth: 80 }}>
+                        <div style={{ color: "#e2e8f0", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</div>
+                        <div style={{ color: "#4a6fa5", fontSize: 11 }}>{s.name}</div>
+                      </div>
+                      <div style={{ textAlign: "right", minWidth: 75 }}>
+                        {s.error || !s.price
+                          ? <div style={{ color: "#f59e0b", fontSize: 11 }}>N/A</div>
+                          : <><div style={{ color: "#e2e8f0" }}>${s.price.toFixed(2)}</div><div style={s.change >= 0 ? S.up : S.down}>{s.change >= 0 ? "▲" : "▼"} {Math.abs(s.change)}%</div></>
+                        }
+                      </div>
+                      <Sparkline data={s.chartData||[]} color={priceColor(s)} />
+                      <button onClick={function(e){e.stopPropagation();removeStock(s.ticker);}} style={{ background:"transparent", border:"none", color:"#4a6fa5", cursor:"pointer", fontSize:14, padding:"0 4px", flexShrink:0 }}>✕</button>
                     </div>
-                  ))}
-                </div>
+                  );
+                })
+              }
+            </div>
+
+            {selectedStock && (
+              <div style={S.card}>
+                <div style={S.cardTitle}>Detail — {selectedStock.ticker}</div>
+                {selectedStock.error || !selectedStock.price
+                  ? (
+                    <div>
+                      <div style={{ color: "#f59e0b", marginBottom: 12 }}>Could not load price data.</div>
+                      <div style={{ color: "#4a6fa5", fontSize: 11, lineHeight: 1.8 }}>
+                        This can happen because:<br/>
+                        · The CORS proxy is temporarily down<br/>
+                        · StackBlitz is blocking the request<br/>
+                        · Market is closed (ASX hours: 10am–4pm AEST)<br/><br/>
+                        Try clicking ↺ REFRESH in the header.<br/>
+                        Once deployed to Cloudflare, this will work reliably.
+                      </div>
+                    </div>
+                  )
+                  : (
+                    <>
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 28, color: "#e2e8f0", fontWeight: 700 }}>${selectedStock.price.toFixed(2)}</div>
+                        <div style={Object.assign({}, selectedStock.change >= 0 ? S.up : S.down, { fontSize: 14 })}>
+                          {selectedStock.change >= 0 ? "▲" : "▼"} {Math.abs(selectedStock.change)}% today
+                        </div>
+                        <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 4 }}>~15 min delayed · Yahoo Finance</div>
+                      </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <MiniChart data={selectedStock.chartData||[]} color={priceColor(selectedStock)} />
+                        <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 4 }}>30-day price history</div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        {[["Sector",selectedStock.sector],["Volume",selectedStock.volume ? (selectedStock.volume/1e6).toFixed(1)+"M" : "N/A"],["Exchange","ASX"],["Currency","AUD"]].map(function(item){
+                          return (
+                            <div key={item[0]} style={{ background: "#050d1a", borderRadius: 6, padding: "8px 12px" }}>
+                              <div style={{ color: "#4a6fa5", fontSize: 10, marginBottom: 2 }}>{item[0]}</div>
+                              <div style={{ color: "#e2e8f0" }}>{item[1]}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )
+                }
               </div>
             )}
           </div>
         )}
 
-        {/* CHARTS TAB */}
+        {/* CHARTS */}
         {tab === "charts" && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              {stocks.map(s => (
-                <div key={s.ticker} style={styles.card}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <div>
-                      <span style={{ color: "#e2e8f0", fontWeight: "600" }}>{s.ticker.replace(".AX","")}</span>
-                      <span style={{ color: "#4a6fa5", fontSize: "11px", marginLeft: 8 }}>{s.name}</span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            {loading
+              ? <div style={Object.assign({}, S.card, { color: "#4a6fa5" })}>⟳ {loadingStatus}</div>
+              : stocks.map(function(s) {
+                return (
+                  <div key={s.ticker} style={S.card}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                      <div>
+                        <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{s.ticker.replace(".AX","")}</span>
+                        <span style={{ color: "#4a6fa5", fontSize: 11, marginLeft: 8 }}>{s.name}</span>
+                      </div>
+                      {s.error || !s.price
+                        ? <span style={{ color: "#f59e0b", fontSize: 11 }}>N/A</span>
+                        : <div style={s.change >= 0 ? S.up : S.down}>${s.price.toFixed(2)} {s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%</div>
+                      }
                     </div>
-                    <div style={s.change >= 0 ? styles.up : styles.down}>${s.price?.toFixed(2)} {s.change >= 0 ? "▲" : "▼"}{Math.abs(s.change)}%</div>
+                    <MiniChart data={s.chartData||[]} color={priceColor(s)} />
+                    <div style={{ color: "#4a6fa5", fontSize: 10, marginTop: 6 }}>30-day history · Yahoo Finance</div>
                   </div>
-                  <MiniChart data={s.chartData || []} color={s.change >= 0 ? "#00ff88" : "#ff4d6d"} />
-                </div>
-              ))}
-            </div>
+                );
+              })
+            }
           </div>
         )}
 
-        {/* NEWS TAB */}
+        {/* NEWS */}
         {tab === "news" && (
-          <div style={styles.card}>
-            <div style={styles.cardTitle}>ASX News & Announcements</div>
-            {NEWS.map(n => (
-              <div key={n.id} style={{ padding: "14px 0", borderBottom: "1px solid #0f2d4a", display: "flex", gap: 14, alignItems: "flex-start", animation: "fadeIn 0.3s ease" }}>
-                <div style={{ color: "#4a6fa5", fontSize: "11px", minWidth: 40 }}>{n.time}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ color: "#e2e8f0", marginBottom: 6, lineHeight: "1.5" }}>{n.title}</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <span style={{ ...styles.badge("neutral"), background: "#00d4ff10", color: "#00d4ff", border: "1px solid #00d4ff20" }}>{n.tag}</span>
-                    <span style={styles.badge(n.sentiment)}>{n.sentiment === "up" ? "▲ POSITIVE" : n.sentiment === "down" ? "▼ NEGATIVE" : "● NEUTRAL"}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* SHIPS TAB */}
-        {tab === "ships" && (
-          <div style={styles.grid2}>
-            <div style={styles.card}>
-              <div style={styles.cardTitle}>Vessel Intelligence — Australian Ports</div>
-              {SHIPS.map(ship => (
-                <div key={ship.id} style={styles.shipRow}>
+          <div style={S.card}>
+            <div style={S.cardTitle}>ASX News & Announcements</div>
+            {NEWS.map(function(n) {
+              return (
+                <div key={n.id} style={{ padding: "14px 0", borderBottom: "1px solid #0f2d4a", display: "flex", gap: 14 }}>
+                  <div style={{ color: "#4a6fa5", fontSize: 11, minWidth: 40 }}>{n.time}</div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ color: "#e2e8f0", fontWeight: "600", marginBottom: 3 }}>
-                      <span style={styles.statusDot(ship.status)}></span>{ship.name}
+                    <div style={{ color: "#e2e8f0", marginBottom: 6, lineHeight: 1.5 }}>{n.title}</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <span style={Object.assign({}, S.badge("neutral"), { background: "#00d4ff10", color: "#00d4ff", border: "1px solid #00d4ff20" })}>{n.tag}</span>
+                      <span style={S.badge(n.sentiment)}>{n.sentiment==="up"?"▲ POSITIVE":n.sentiment==="down"?"▼ NEGATIVE":"● NEUTRAL"}</span>
                     </div>
-                    <div style={{ color: "#4a6fa5", fontSize: "11px" }}>{ship.type} · {ship.cargo}</div>
-                    <div style={{ color: "#4a6fa5", fontSize: "11px", marginTop: 2 }}>{ship.from} → {ship.to}</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ ...styles.badge(ship.status === "Underway" ? "up" : "neutral"), marginBottom: 4 }}>{ship.status}</div>
-                    <div style={{ color: "#00d4ff", fontSize: "10px" }}>{ship.relevance}</div>
                   </div>
                 </div>
-              ))}
+              );
+            })}
+          </div>
+        )}
+
+        {/* SHIPS */}
+        {tab === "ships" && (
+          <div style={S.grid2}>
+            <div style={S.card}>
+              <div style={S.cardTitle}>Vessel Intelligence — Australian Ports</div>
+              {SHIPS.map(function(ship) {
+                return (
+                  <div key={ship.id} style={S.shipRow}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: "#e2e8f0", fontWeight: 600, marginBottom: 3 }}><span style={S.dot(ship.status)}></span>{ship.name}</div>
+                      <div style={{ color: "#4a6fa5", fontSize: 11 }}>{ship.type} · {ship.cargo}</div>
+                      <div style={{ color: "#4a6fa5", fontSize: 11, marginTop: 2 }}>{ship.from} → {ship.to}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={Object.assign({}, S.badge(ship.status==="Underway"?"up":"neutral"), { marginBottom: 4 })}>{ship.status}</div>
+                      <div style={{ color: "#00d4ff", fontSize: 10 }}>{ship.relevance}</div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div style={styles.card}>
-              <div style={styles.cardTitle}>Signal Intelligence</div>
-              <div style={{ color: "#4a6fa5", fontSize: "11px", lineHeight: "1.8" }}>
-                <div style={{ background: "#050d1a", borderRadius: 6, padding: 12, marginBottom: 10 }}>
-                  <div style={{ color: "#00d4ff", marginBottom: 6 }}>● IRON ORE SIGNAL</div>
-                  <div>3 bulk carriers departing Pilbara ports this week. Consistent with elevated demand from Chinese mills. Positive signal for <span style={{ color: "#00ff88" }}>BHP, RIO, FMG</span>.</div>
-                </div>
-                <div style={{ background: "#050d1a", borderRadius: 6, padding: 12, marginBottom: 10 }}>
-                  <div style={{ color: "#f59e0b", marginBottom: 6 }}>● LNG SIGNAL</div>
-                  <div>LNG tanker volume from Karratha up 12% vs last month. Supports <span style={{ color: "#00ff88" }}>WDS</span> revenue outlook.</div>
-                </div>
-                <div style={{ background: "#050d1a", borderRadius: 6, padding: 12 }}>
-                  <div style={{ color: "#94a3b8", marginBottom: 6 }}>● COAL SIGNAL</div>
-                  <div>Newcastle bulk carriers anchored — slight delay in exports. Watch <span style={{ color: "#f59e0b" }}>coal prices</span> this week.</div>
-                </div>
-              </div>
+            <div style={S.card}>
+              <div style={S.cardTitle}>Signal Intelligence</div>
+              {[
+                { color: "#00d4ff", label: "IRON ORE SIGNAL", text: "3 bulk carriers departing Pilbara ports this week. Positive signal for BHP, RIO, FMG." },
+                { color: "#f59e0b", label: "LNG SIGNAL", text: "LNG tanker volume from Karratha up 12% vs last month. Supports WDS revenue outlook." },
+                { color: "#94a3b8", label: "COAL SIGNAL", text: "Newcastle bulk carriers anchored — slight delay in exports. Watch coal prices." },
+              ].map(function(sig) {
+                return (
+                  <div key={sig.label} style={{ background: "#050d1a", borderRadius: 6, padding: 12, marginBottom: 10, fontSize: 11, color: "#4a6fa5", lineHeight: 1.7 }}>
+                    <div style={{ color: sig.color, marginBottom: 6 }}>● {sig.label}</div>
+                    <div>{sig.text}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* ALERTS TAB */}
+        {/* ALERTS */}
         {tab === "alerts" && (
-          <div style={styles.grid2}>
-            <div style={styles.card}>
-              <div style={styles.cardTitle}>Active Alerts</div>
+          <div style={S.grid2}>
+            <div style={S.card}>
+              <div style={S.cardTitle}>Active Alerts</div>
+              <div style={{ color: "#4a6fa5", fontSize: 10, marginBottom: 12 }}>Alerts check on each price refresh</div>
               {alerts.length === 0 && <div style={{ color: "#4a6fa5" }}>No alerts set.</div>}
-              {alerts.map(a => (
-                <div key={a.id} style={styles.alertRow}>
-                  <div>
-                    <span style={{ color: "#00d4ff" }}>{a.ticker.replace(".AX","")}</span>
-                    <span style={{ color: "#4a6fa5", margin: "0 8px" }}>price</span>
-                    <span style={a.condition === "above" ? styles.up : styles.down}>{a.condition.toUpperCase()}</span>
-                    <span style={{ color: "#e2e8f0", marginLeft: 8 }}>${a.price.toFixed(2)}</span>
+              {alerts.map(function(a) {
+                return (
+                  <div key={a.id} style={S.alertRow}>
+                    <div>
+                      <span style={{ color: "#00d4ff" }}>{a.ticker.replace(".AX","")}</span>
+                      <span style={{ color: "#4a6fa5", margin: "0 8px" }}>price</span>
+                      <span style={a.condition==="above"?S.up:S.down}>{a.condition.toUpperCase()}</span>
+                      <span style={{ color: "#e2e8f0", marginLeft: 8 }}>${a.price.toFixed(2)}</span>
+                    </div>
+                    <button style={S.btnSm} onClick={function(){removeAlert(a.id);}}>REMOVE</button>
                   </div>
-                  <button style={styles.btnDanger} onClick={() => removeAlert(a.id)}>REMOVE</button>
-                </div>
-              ))}
+                );
+              })}
               <div style={{ marginTop: 20 }}>
-                <div style={styles.cardTitle}>Add New Alert</div>
+                <div style={S.cardTitle}>Add New Alert</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <select style={styles.select} value={newAlert.ticker} onChange={e => setNewAlert(p => ({ ...p, ticker: e.target.value }))}>
-                    {STOCKS.map(s => <option key={s.ticker} value={s.ticker}>{s.ticker.replace(".AX","")}</option>)}
+                  <select style={S.select} value={newAlert.ticker} onChange={function(e){setNewAlert(function(p){return Object.assign({},p,{ticker:e.target.value});});}}>
+                    {stocks.map(function(s){return <option key={s.ticker} value={s.ticker}>{s.ticker.replace(".AX","")}</option>;})}
                   </select>
-                  <select style={styles.select} value={newAlert.condition} onChange={e => setNewAlert(p => ({ ...p, condition: e.target.value }))}>
+                  <select style={S.select} value={newAlert.condition} onChange={function(e){setNewAlert(function(p){return Object.assign({},p,{condition:e.target.value});});}}>
                     <option value="above">ABOVE</option>
                     <option value="below">BELOW</option>
                   </select>
-                  <input style={{ ...styles.input, width: 90 }} type="number" placeholder="Price" value={newAlert.price} onChange={e => setNewAlert(p => ({ ...p, price: e.target.value }))} />
-                  <button style={styles.btn} onClick={addAlert}>+ ADD ALERT</button>
+                  <input style={Object.assign({},S.input,{width:90})} type="number" placeholder="Price" value={newAlert.price} onChange={function(e){setNewAlert(function(p){return Object.assign({},p,{price:e.target.value});});}} />
+                  <button style={S.btn} onClick={addAlert}>+ ADD ALERT</button>
                 </div>
               </div>
             </div>
-            <div style={styles.card}>
-              <div style={styles.cardTitle}>Triggered Alerts History</div>
-              {triggeredAlerts.length === 0 && <div style={{ color: "#4a6fa5" }}>No alerts triggered yet. Prices refresh every 4 seconds.</div>}
-              {triggeredAlerts.map((a, i) => (
-                <div key={i} style={{ ...styles.alertRow, borderColor: "#ff4d6d30", background: "#ff4d6d08" }}>
-                  <div>
-                    <span style={{ color: "#ff4d6d" }}>🔔 {a.ticker.replace(".AX","")}</span>
-                    <span style={{ color: "#4a6fa5", margin: "0 6px" }}>{a.condition}</span>
-                    <span style={{ color: "#e2e8f0" }}>${a.price.toFixed(2)}</span>
-                    <span style={{ color: "#4a6fa5", fontSize: "10px", marginLeft: 8 }}>@ {a.triggeredAt}</span>
+            <div style={S.card}>
+              <div style={S.cardTitle}>Triggered Alerts History</div>
+              {triggeredAlerts.length === 0 && <div style={{ color: "#4a6fa5" }}>No alerts triggered yet.</div>}
+              {triggeredAlerts.map(function(a, i) {
+                return (
+                  <div key={i} style={Object.assign({},S.alertRow,{borderColor:"#ff4d6d30",background:"#ff4d6d08"})}>
+                    <div>
+                      <span style={{ color: "#ff4d6d" }}>🔔 {a.ticker.replace(".AX","")}</span>
+                      <span style={{ color: "#4a6fa5", margin: "0 6px" }}>{a.condition}</span>
+                      <span style={{ color: "#e2e8f0" }}>${a.price.toFixed(2)}</span>
+                      <span style={{ color: "#4a6fa5", fontSize: 10, marginLeft: 8 }}>@ {a.triggeredAt}</span>
+                    </div>
+                    <button style={S.btnSm} onClick={function(){dismissTriggered(i);}}>✕</button>
                   </div>
-                  <button style={styles.btnDanger} onClick={() => dismissTriggered(a.id)}>✕</button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
