@@ -55,24 +55,27 @@ async function fetchPrice(ticker) {
 }
 
 async function searchStocksRemote(query) {
-  try {
-    const res = await fetch(
-      WORKER_BASE + "/search?q=" + encodeURIComponent(query)
-    );
-    if (!res.ok) return [];
+  const res = await fetch(
+    WORKER_BASE + "/search?q=" + encodeURIComponent(query)
+  );
 
-    const data = await res.json();
-
-    return (data.results || []).map(function(item) {
-      return {
-        ticker: item.yahooTicker,
-        name: item.name,
-        sector: item.sector || "Unknown",
-      };
-    });
-  } catch (e) {
-    return [];
+  if (!res.ok) {
+    throw new Error("Search request failed: " + res.status);
   }
+
+  const data = await res.json();
+
+  if (!data || !Array.isArray(data.results)) {
+    throw new Error("Unexpected search response format");
+  }
+
+  return data.results.map(function(item) {
+    return {
+      ticker: item.yahooTicker,
+      name: item.name,
+      sector: item.sector || "Unknown",
+    };
+  });
 }
 
 function Sparkline({ data, color }) {
@@ -131,6 +134,8 @@ export default function App() {
   const [searchResults, setSearchResults] = useState([]);
   const [fetchingTicker, setFetchingTicker] = useState(null);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const searchReqIdRef = useRef(0);
 
   const watchlistRef = useRef(DEFAULT_TICKERS.map(function(t) {
     return {
@@ -184,6 +189,7 @@ export default function App() {
 
   async function handleSearch(query) {
     setSearchQuery(query);
+    setSearchError("");
 
     if (!query.trim()) {
       setSearchResults([]);
@@ -191,20 +197,34 @@ export default function App() {
       return;
     }
 
+    const reqId = ++searchReqIdRef.current;
     setSearching(true);
-    const results = await searchStocksRemote(query);
 
-    const filtered = results.filter(function(s) {
-      return !stocks.find(function(w) { return w.ticker === s.ticker; });
-    }).slice(0, 6);
+    try {
+      const results = await searchStocksRemote(query);
 
-    setSearchResults(filtered);
-    setSearching(false);
+      if (reqId !== searchReqIdRef.current) return;
+
+      const filtered = results.filter(function(s) {
+        return !stocks.find(function(w) { return w.ticker === s.ticker; });
+      }).slice(0, 6);
+
+      setSearchResults(filtered);
+    } catch (err) {
+      if (reqId !== searchReqIdRef.current) return;
+      setSearchResults([]);
+      setSearchError(err.message || "Search failed");
+    } finally {
+      if (reqId === searchReqIdRef.current) {
+        setSearching(false);
+      }
+    }
   }
 
   async function addStock(def) {
     setSearchQuery("");
     setSearchResults([]);
+    setSearchError("");
     setFetchingTicker(def.ticker);
 
     var data = await fetchPrice(def.ticker);
@@ -473,6 +493,18 @@ export default function App() {
                 {searching && (
                   <div style={{ color: "#f59e0b", fontSize: 11, padding: "6px 0" }}>
                     ⟳ Searching ASX stocks...
+                  </div>
+                )}
+
+                {searchError && (
+                  <div style={{ color: "#ff4d6d", fontSize: 11, padding: "6px 0" }}>
+                    {searchError}
+                  </div>
+                )}
+
+                {!searching && !searchError && searchQuery.trim() && searchResults.length === 0 && (
+                  <div style={{ color: "#4a6fa5", fontSize: 11, padding: "6px 0" }}>
+                    No matching stocks found.
                   </div>
                 )}
 
