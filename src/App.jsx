@@ -65,16 +65,45 @@ async function searchStocksRemote(query) {
 
   const data = await res.json();
 
-  if (!data || !Array.isArray(data.results)) {
-    throw new Error("Unexpected search response format");
+  const list =
+    Array.isArray(data) ? data :
+    Array.isArray(data.results) ? data.results :
+    Array.isArray(data.data) ? data.data :
+    Array.isArray(data.tickers) ? data.tickers :
+    [];
+
+  if (!list.length) {
+    console.log("Search response from worker:", data);
+    return [];
   }
 
-  return data.results.map(function(item) {
+  return list.map(function(item) {
+    if (typeof item === "string") {
+      return {
+        ticker: item.endsWith(".AX") ? item : item + ".AX",
+        name: item.replace(".AX", ""),
+        sector: "Unknown"
+      };
+    }
+
     return {
-      ticker: item.yahooTicker,
-      name: item.name,
-      sector: item.sector || "Unknown",
+      ticker:
+        item.yahooTicker ||
+        item.ticker ||
+        (item.asxCode ? item.asxCode + ".AX" : ""),
+      name:
+        item.name ||
+        item.companyName ||
+        item.company ||
+        item.asxCode ||
+        "Unknown",
+      sector:
+        item.sector ||
+        item.industry ||
+        "Unknown"
     };
+  }).filter(function(item) {
+    return item.ticker;
   });
 }
 
