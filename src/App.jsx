@@ -30,7 +30,7 @@ const SHIPS = [
 
 async function fetchPrice(ticker) {
   try {
-    const res  = await fetch(`${WORKER_BASE}/?ticker=${encodeURIComponent(ticker)}`);
+    const res  = await fetch(`${WORKER_BASE}?ticker=${encodeURIComponent(ticker)}`);
     if (!res.ok) return null;
     const data = await res.json();
     if (!data.ok) return null;
